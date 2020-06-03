@@ -37,6 +37,11 @@ export default {
   components: {
     vueBigTree
   },
+  computed: {
+    filterTree () {
+      return null
+    }
+  },
   methods: {
     collapseAll() {
       this.$refs.bigTree.collapseAll();

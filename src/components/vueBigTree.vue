@@ -1,31 +1,36 @@
 <template>
-  <div
-    class="b-tree"
-    ref="scroller"
-    :style="{ height: option.height + 'px' }"
-    @scroll="handleScroll"
-  >
-    <div class="b-tree__phantom" :style="{ height: contentHeight }"></div>
+  <div>
+    <input v-model="filterName" @input="fuzzySearch"/>
     <div
-      class="b-tree__content"
-      :style="{ transform: `translateY(${offset}px)` }"
+      class="b-tree"
+      ref="scroller"
+      :style="{ height: option.height + 'px' }"
+      @scroll="handleScroll"
     >
+      <div class="b-tree__phantom" :style="{ height: contentHeight }"></div>
       <div
-        v-for="(item, index) in visibleData"
-        :key="item.id"
-        class="b-tree__list-view"
-        :style="{
-          paddingLeft: 18 * (item.level - 1) + 'px',
-          height: option.itemHeight + 'px'
-        }"
+        class="b-tree__content"
+        :style="{ transform: `translateY(${offset}px)` }"
       >
-        <i
-          :class="item.expand ? 'b-tree__expand' : 'b-tree__close'"
-          @click="toggleExpand(item)"
-          v-if="item.children && item.children.length"
-        />
-        <span v-else style="margin-right:5px"></span>
-        <slot :item="item" :index="index"></slot>
+        <div
+          v-for="(item, index) in visibleData"
+          @click="selectNode(item)"
+          :key="item.id"
+          class="b-tree__list-view"
+          :class="{active: item.active}"
+          :style="{
+            paddingLeft: 18 * (item.level - 1) + 'px',
+            height: option.itemHeight + 'px'
+          }"
+        >
+          <i
+            :class="item.expand ? 'b-tree__expand' : 'b-tree__close'"
+            @click="toggleExpand(item)"
+            v-if="item.children && item.children.length"
+          />
+          <span v-else style="margin-right:5px"></span>
+          <slot :item="item" :index="index"></slot>
+        </div>
       </div>
     </div>
   </div>
@@ -54,6 +59,9 @@
   display: flex;
   align-items: center;
   cursor: pointer;
+}
+.b-tree__list-view.active {
+  background-color: beige;
 }
 .b-tree__content__item {
   padding: 5px;
@@ -100,6 +108,7 @@
 </style>
 <script>
   let lastTime = 0;
+import debounce from '../utils/debounce'
 export default {
   name: "vueBigTree",
   props: {
@@ -135,10 +144,19 @@ export default {
     return {
       offset: 0, // translateY偏移量
       contentHeight: "0px",
-      visibleData: []
+      visibleData: [],
+      filterName: '',
+      filterIds: null
     };
   },
   computed: {
+    filterFlattenTree () {
+      if (this.filterIds) {
+        return this.flattenTree.filter(i => this.filterIds[i.id])
+      } else {
+        return this.flattenTree
+      }
+    },
     flattenTree() {
       const flatten = function(
         list,
@@ -159,7 +177,9 @@ export default {
           if (!parent.visible || !parent.expand) {
             item.visible = false;
           }
-          item.parent = parent;
+          item.pid = parent.id || null
+          item.pids = parent.pids ? [...parent.pids, item.id] : [item.id]
+          item.active = false
           arr.push(item);
           if (item[childKey]) {
             arr.push(
@@ -168,19 +188,22 @@ export default {
                 childKey,
                 level + 1,
                 item,
-                defaultExpand
+                defaultExpand,
               )
             );
           }
         });
         return arr;
       };
-      return flatten(this.tree, "children", 1, {
+
+      let item = flatten(this.tree, "children", 1, {
         level: 0,
         visible: true,
         expand: true,
         children: this.tree
       });
+
+      return item
     },
     visibleCount() {
       return Math.floor(this.option.height / this.option.itemHeight);
@@ -190,6 +213,30 @@ export default {
     this.updateView();
   },
   methods: {
+    fuzzySearch: debounce(function () {
+      this.$nextTick(() => {
+        this.filterIds = {}
+        console.time('First')
+        if (this.filterName) {
+          Array.from(new Set(
+            this.flattenTree
+            .filter(i => i.label.indexOf(this.filterName) > -1)
+            .map(item => item.pids)
+            .toString()
+            .split(',')
+            .forEach(item => this.filterIds[item] = 1)))
+        } else {
+          this.filterIds = null
+        }
+        console.timeEnd('First')
+        this.updateView()
+      })
+    }),
+    selectNode (item) {
+      this.flattenTree.forEach(i => {
+        i.active = i.id === item.id
+      })
+    },
     updateView() {
       this.getContentHeight();
       this.$emit("update", this.tree);
@@ -206,7 +253,7 @@ export default {
       let start = Math.floor(scrollTop / this.option.itemHeight) - Math.floor(this.visibleCount / 2);
       start = start < 0 ? 0 : start;
       const end = start + this.visibleCount * 2;
-      const allVisibleData = (this.flattenTree || []).filter(
+      const allVisibleData = (this.filterFlattenTree || []).filter(
         item => item.visible
       );
       this.visibleData = allVisibleData.slice(start, end);
@@ -215,7 +262,7 @@ export default {
 
     getContentHeight() {
       this.contentHeight =
-        (this.flattenTree || []).filter(item => item.visible).length *
+        (this.filterFlattenTree || []).filter(item => item.visible).length *
           this.option.itemHeight +
         "px";
     },
@@ -243,7 +290,7 @@ export default {
 
     //折叠所有
     collapseAll(level = 1) {
-      this.flattenTree.forEach(item => {
+      this.filterFlattenTree.forEach(item => {
         item.expand = false;
         if (item.level != level) {
           item.visible = false;
@@ -254,7 +301,7 @@ export default {
 
     //展开所有
     expandAll() {
-      this.flattenTree.forEach(item => {
+      this.filterFlattenTree.forEach(item => {
         item.expand = true;
         item.visible = true;
       });
